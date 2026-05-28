@@ -43,6 +43,28 @@ function getAgentId(agentName: string): string | null {
   return null;
 }
 
+// ─── Task → Primary Security Domain ────────────────────────────
+// Mirrors _CATEGORY_SITES in orchestrator.py
+const TASK_DOMAIN_RULES: { keywords: string[]; domain: string }[] = [
+  { keywords: ["bill", "broadband", "electricity", "recharge", "airtel", "jio", "bsnl", "vodafone", "vi ", "postpaid", "prepaid", "dth", "gas", "water", "utility", "pay my"], domain: "paytm.com" },
+  { keywords: ["pizza", "burger", "food", "restaurant", "zomato", "swiggy", "order", "eat", "meal", "biryani", "sandwich", "sushi", "pasta"], domain: "zomato.com" },
+  { keywords: ["flight", "airline", "airways", "indigo", "air india", "spicejet", "vistara", "fly", "plane"], domain: "makemytrip.com" },
+  { keywords: ["train", "irctc", "railway", "rail"], domain: "irctc.co.in" },
+  { keywords: ["hotel", "resort", "stay", "accommodation", "room", "oyo", "inn", "lodge"], domain: "makemytrip.com" },
+  { keywords: ["cab", "taxi", "ola", "uber", "ride", "auto"], domain: "olacabs.com" },
+  { keywords: ["movie", "ticket", "film", "cinema", "pvr", "inox", "cinepolis", "bms", "bookmyshow", "show", "imax", "4dx"], domain: "bookmyshow.com" },
+];
+
+function getTaskDomain(task: string): string {
+  const lower = task.toLowerCase();
+  for (const rule of TASK_DOMAIN_RULES) {
+    if (rule.keywords.some((kw) => lower.includes(kw))) {
+      return rule.domain;
+    }
+  }
+  return "paytm.com"; // default for unknown tasks
+}
+
 // ─── Main Dashboard Page ────────────────────────────────────────
 export default function DashboardPage() {
   // Input
@@ -127,17 +149,26 @@ export default function DashboardPage() {
       }
     }
 
-    // Security scan results — extract score and primary domain from message
+    // Security scan results — set domain from task input, extract score from message
     if (event_type === "security_complete") {
       const scoreMatch = message.match(/(\d{1,3})\s*\/\s*100/);
       const score = scoreMatch ? Math.min(100, parseInt(scoreMatch[1])) : 92;
       setSecurityScore(score);
       setSecurityVerdict(score >= 80 ? "SAFE" : score >= 55 ? "CAUTION" : "DANGEROUS");
       setSecurityVisible(true);
-      // Extract the first scanned domain from message (e.g. "paytm.com: trust=..." or "✅ paytm.com")
-      const domainMatch = message.match(/([a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2,})?):?\s*trust=/i)
-                       || message.match(/✅\s+([a-z0-9-]+\.[a-z]{2,})/i);
-      if (domainMatch) setSecurityDomain(domainMatch[1].trim());
+
+      // 1st priority: derive domain from the actual task input (most reliable)
+      const domainFromTask = getTaskDomain(taskInput);
+
+      // 2nd priority: try to parse a domain from the agent message
+      //   handles fallback format: "paytm.com: trust=100/100"
+      //   handles NIM format:      "https://paytm.com" or "✅ paytm.com"
+      const msgDomainMatch =
+        message.match(/([a-z0-9-]+\.(?:com|in|co\.in|net|org))(?::?\s*trust=|\s*with a trust)/i) ||
+        message.match(/https?:\/\/(?:www\.)?([a-z0-9-]+\.(?:com|in|co\.in|net|org))/i) ||
+        message.match(/✅\s+([a-z0-9-]+\.(?:com|in|co\.in|net|org))/i);
+
+      setSecurityDomain(msgDomainMatch ? msgDomainMatch[1].trim() : domainFromTask);
     }
 
     // Decision complete → show approval modal
