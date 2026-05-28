@@ -167,10 +167,11 @@ class NIMAgent:
                 try:
                     response = await self.client.chat.completions.create(**kwargs)
                     break  # success — exit retry loop
-                except RateLimitError:
+                except RateLimitError as rle:
                     if attempt == MAX_RETRIES:
-                        raise  # give up after max retries
-                    wait = RETRY_BASE_WAIT * (2 ** (attempt - 1))   # 5s, 10s, 20s
+                        # Re-raise as a plain Exception so orchestrator fallback can detect '429'
+                        raise Exception(f"Error code: 429 - rate limit exhausted after {MAX_RETRIES} retries") from rle
+                    wait = RETRY_BASE_WAIT * (2 ** (attempt - 1))
                     print(f"[NIM] Rate limit hit (attempt {attempt}/{MAX_RETRIES}). Retrying in {wait}s…")
                     await asyncio.sleep(wait)
             choice = response.choices[0]
@@ -216,13 +217,16 @@ class NIMAgent:
             "role": "user",
             "content": "Please summarise your findings so far in a clear, concise response.",
         })
-        final = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.2,
-        )
-        return final.choices[0].message.content or ""
+        try:
+            final = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=1024,
+                temperature=0.2,
+            )
+            return final.choices[0].message.content or ""
+        except RateLimitError as rle:
+            raise Exception("Error code: 429 - rate limit on summary call") from rle
 
 
 def get_nim_client(api_key: str | None = None) -> AsyncOpenAI:

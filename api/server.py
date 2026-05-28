@@ -226,6 +226,15 @@ async def _run_pipeline(task_id: str, req: TaskRequest):
         tasks[task_id]["status"] = "completed"
 
     except Exception as e:
+        err_msg = str(e)
+        # Provide a user-friendly message for known error types
+        if "429" in err_msg or "Too Many Requests" in err_msg:
+            friendly = "⚠️ AI model is busy (rate limit). Please wait 60s and try again, or try a different task."
+        else:
+            friendly = f"❌ Pipeline error: {err_msg[:200]}"
         tasks[task_id]["status"] = "error"
-        await emit("error", "Orchestrator", f"❌ Pipeline error: {str(e)}")
-        raise
+        await emit("error", "Orchestrator", friendly)
+        # Do NOT re-raise — let the WebSocket close cleanly
+    finally:
+        # Always signal pipeline end so WebSocket loop exits
+        await queue.put(build_event("complete", "Orchestrator", "Pipeline finished.", task_id))
