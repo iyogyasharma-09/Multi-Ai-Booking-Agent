@@ -138,25 +138,82 @@ export default function DashboardPage() {
     if (event_type === "awaiting_approval") {
       setAgentStatus("decision", "waiting");
 
-      // Build a realistic booking summary for the modal
+      // ── Parse real values from the task input + agent messages ──────────────
+
+      // Extract movie name from task input (words between "for"/"of" and "on"/"under"/"tickets")
+      let movieTitle = taskInput.trim();
+      const movieMatch = taskInput.match(
+        /(?:for|of)\s+([^,]+?)(?:\s+on\s+|\s+under\s+|\s+this\s+|\s*$)/i
+      );
+      if (movieMatch) {
+        movieTitle = movieMatch[1].trim();
+        // Title-case it
+        movieTitle = movieTitle.replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+
+      // Extract quantity from task input
+      const qtyMatch = taskInput.match(/(\d+)\s+ticket/i);
+      const quantity = qtyMatch ? parseInt(qtyMatch[1]) : 2;
+
+      // Extract budget from task input
+      const budgetMatch = taskInput.match(/(?:under|within|budget|₹)\s*[₹]?\s*(\d+)/i);
+      const budgetLimit = budgetMatch ? parseInt(budgetMatch[1]) : 1000;
+
+      // Extract date from task input
+      const dateMatch = taskInput.match(/(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|this\s+\w+)/i);
+      const date = dateMatch ? dateMatch[1].replace(/\b\w/g, (c) => c.toUpperCase()) : "Sunday";
+
+      // Parse cinema, time, price, seats from the latest decision_complete message
+      // Message format from fallback: "📍 Venue : PVR Phoenix Mall\n🕐 Showtime : 7:00 PM..."
+      const cinemaMatch = message.match(/Venue\s*:\s*([^\n]+)/i) ||
+                          message.match(/((?:PVR|INOX|Cinepolis|SPI|AMB|DT|Asian|MovieMax|Carnival|Rohini)[^|\n,]+)/i);
+      const cinema = cinemaMatch ? cinemaMatch[1].trim() : "PVR Phoenix Mall";
+
+      const timeMatch = message.match(/Showtime\s*:\s*([\d:]+\s*(?:AM|PM))/i) ||
+                        message.match(/([\d:]+\s*(?:AM|PM))/);
+      const time = timeMatch ? timeMatch[1].trim() : "7:00 PM";
+
+      const priceMatch = message.match(/₹(\d+)\s*[×x\/]\s*\d+/i) ||
+                         message.match(/Base pr[a-z]*\s*:?\s*₹?(\d+)/i) ||
+                         message.match(/(\d{2,4})\/seat/i);
+      const pricePerSeat = priceMatch ? parseInt(priceMatch[1]) : 300;
+
+      const seatsMatch = message.match(/Seats?\s*:\s*(\[[^\]]+\]|[A-H]\d+(?:,\s*[A-H]\d+)*)/i);
+      let seats: string[] = [];
+      if (seatsMatch) {
+        seats = seatsMatch[1].replace(/[\[\]']/g, "").split(/,\s*/);
+      }
+      if (!seats.length) {
+        // Generate seats based on quantity
+        const rows = ["C", "D", "E", "F"];
+        const row = rows[Math.floor(Math.random() * rows.length)];
+        const startNum = Math.floor(Math.random() * 8) + 1;
+        seats = Array.from({ length: quantity }, (_, i) => `${row}${startNum + i}`);
+      }
+
+      const convFee = Math.round(pricePerSeat * quantity * 0.02 + 20);
+      const gst = Math.round((pricePerSeat * quantity + convFee) * 0.18);
+      const total = pricePerSeat * quantity + convFee + gst;
+
       const summary: BookingSummary = {
-        movieTitle: "Mission: Impossible — The Final Reckoning",
-        cinema: "PVR Phoenix Mall",
-        date: "Sunday",
-        time: "7:00 PM",
-        seats: ["D5", "D6"],
-        seatCategory: "Premium",
-        quantity: 2,
-        pricePerSeat: 350,
-        convenienceFee: 30,
-        gst: 68,
-        total: 748,
-        budgetLimit: 800,
+        movieTitle,
+        cinema,
+        date,
+        time,
+        seats,
+        seatCategory: pricePerSeat > 380 ? "Gold" : pricePerSeat > 280 ? "Premium" : "Standard",
+        quantity,
+        pricePerSeat,
+        convenienceFee: convFee,
+        gst,
+        total,
+        budgetLimit,
         paymentMethod: "UPI",
       };
       setBookingSummary(summary);
       setShowModal(true);
     }
+
 
     // Payment approved — mark payment agent active
     if (event_type === "approved") {
@@ -187,7 +244,7 @@ export default function DashboardPage() {
     if (event_type === "cancelled") {
       setIsRunning(false);
     }
-  }, [addLog, setAgentStatus]);
+  }, [taskInput, addLog, setAgentStatus]);
 
   // ── Submit Task ─────────────────────────────────────────────
   const handleSubmit = useCallback(async () => {
