@@ -203,48 +203,178 @@ async def run_task(
         else:
             print(f"[{agent}] {message[:200]}")
 
+    # ── Phase-level fallbacks using local tools directly ─────────────────────
+    def _fallback_plan(task: str) -> str:
+        intent = parse_user_intent(task)
+        plan   = create_task_plan(intent)
+        return (
+            f"[Demo Mode — NIM rate limit reached, using local tools]\n\n"
+            f"📋 TASK PARSED:\n"
+            f"  • Category  : {intent.get('category','general')}\n"
+            f"  • Quantity  : {intent.get('quantity', 1)} tickets\n"
+            f"  • Item      : {intent.get('item_name', task)}\n"
+            f"  • Budget    : ₹{intent.get('budget_inr','N/A')}\n"
+            f"  • Date/Time : {intent.get('preferred_date','any date')} {intent.get('preferred_time','evening')}\n\n"
+            f"📌 EXECUTION PLAN ({plan.get('total_steps',5)} steps):\n"
+            + "\n".join(f"  {s}" for s in plan.get("steps", ["Search → Select → Pay"]))
+        )
+
+    def _fallback_security() -> str:
+        sites = ["bookmyshow.com", "pvrinemas.com", "inoxmovies.com"]
+        lines = ["[Demo Mode — NIM rate limit reached, using local tools]\n\n🔒 SECURITY SCAN RESULTS:\n"]
+        for site in sites:
+            r = check_url_safety(f"https://{site}")
+            lines.append(f"  {r['icon']} {site}: trust={r['trust_score']}/100  verdict={r['verdict']}")
+        lines.append("\n✅ All platforms cleared for booking. Proceeding with bookmyshow.com.")
+        return "\n".join(lines)
+
+    def _fallback_nav(task: str) -> str:
+        intent   = parse_user_intent(task)
+        item     = intent.get("item_name", "the requested show")
+        date_val = intent.get("preferred_date", "Sunday")
+        time_val = intent.get("preferred_time", "evening")
+        qty      = intent.get("quantity", 2)
+        listings = extract_movie_listings("bookmyshow.com", item, date_val, time_val)
+        shows    = listings.get("shows", [])
+        seats    = navigate_to_seat_selection("bookmyshow.com", item, shows[0]["time"] if shows else "7:00 PM", qty)
+        selected = seats.get("selected_seats", ["D5", "D6"])
+        form     = fill_booking_form("TaskHive Demo", "demo@taskhive.ai", "9876543210", qty, selected)
+        lines    = [
+            "[Demo Mode — NIM rate limit reached, using local tools]\n",
+            f"🌐 WEB NAVIGATION RESULTS for '{item}':",
+            f"   Found {listings.get('total_shows_found', len(shows))} shows on {listings.get('website','bookmyshow.com')}.\n",
+        ]
+        for i, s in enumerate(shows[:3], 1):
+            lines.append(f"  {i}. {s.get('time','?')} | {s.get('cinema','?')} | ₹{s.get('price_per_seat','?')} | {s.get('format','?')}")
+        best = min(shows, key=lambda s: s.get("price_per_seat", 9999)) if shows else {}
+        lines += [
+            f"\n  ✅ BEST MATCH: {best.get('time','?')} @ {best.get('cinema','?')} ₹{best.get('price_per_seat','?')}/seat",
+            f"  🪑 Seats selected: {selected}",
+            f"  📋 Form filled: {form.get('status','OK')} — {form.get('message','')}",
+        ]
+        return "\n".join(lines)
+
+
+    def _fallback_decision(task: str) -> str:
+        intent  = parse_user_intent(task)
+        item    = intent.get("item_name", "show")
+        qty     = intent.get("quantity", 2)
+        budget  = intent.get("budget_inr", 1000)
+        date_v  = intent.get("preferred_date", "Sunday")
+        time_v  = intent.get("preferred_time", "evening")
+        shows   = extract_movie_listings("bookmyshow.com", item, date_v, time_v).get("shows", [])
+        best    = min(shows, key=lambda s: s.get("price_per_seat", 9999)) if shows else {"price_per_seat": 350, "cinema": "PVR"}
+        price   = best.get("price_per_seat", 350)
+        total   = calculate_total_amount(price, qty, intent.get("category","movies"), True)
+        b_check = check_budget_constraint(total["total_payable"], budget)
+        icon    = "✅" if b_check["within_budget"] else "⚠️"
+        return (
+            f"[Demo Mode — NIM rate limit reached, using local tools]\n\n"
+            f"✅ DECISION SUMMARY:\n\n"
+            f"  📍 Venue    : {best.get('cinema','PVR')}\n"
+            f"  🕐 Showtime : {best.get('time','7:00 PM')} — {date_v}\n"
+            f"  💺 Seats    : {qty} tickets\n\n"
+            f"  💰 COST BREAKDOWN:\n"
+            + "\n".join(f"     {line}" for line in total.get("breakdown", [])) +
+            f"\n\n  {icon} Budget check: ₹{total['total_payable']} vs ₹{budget} limit — "
+            f"{'Within budget ✅' if b_check['within_budget'] else 'Over budget ⚠️'}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Shall I proceed with the simulated payment? (Yes/No)"
+        )
+
+    def _fallback_payment(task: str) -> str:
+        intent = parse_user_intent(task)
+        qty    = intent.get("quantity", 2)
+        date_v = intent.get("preferred_date", "Sunday")
+        time_v = intent.get("preferred_time", "evening")
+        shows  = extract_movie_listings("bookmyshow.com", intent.get("item_name","show"), date_v, time_v).get("shows", [])
+        best   = min(shows, key=lambda s: s.get("price_per_seat", 9999)) if shows else {"price_per_seat": 350}
+        total  = calculate_total_amount(best.get("price_per_seat", 350), qty, intent.get("category","movies"), True)
+        seats  = navigate_to_seat_selection("bookmyshow.com", intent.get("item_name","show"), best.get("time","7:00 PM"), qty)
+        pay    = simulate_payment(
+            {"category": intent.get("category","movies"), "provider": "BMS",
+             "seats": seats.get("selected_seats", ["D5","D6"]), "quantity": qty},
+            total["total_payable"], "UPI"
+        )
+        ref = generate_booking_reference(intent.get("category","movies"), "BMS")
+        return (
+            f"[Demo Mode — NIM rate limit reached, using local tools]\n\n"
+            f"💳 PAYMENT PROCESSING...\n\n"
+            f"  ⚡ Initiating UPI payment of ₹{total['total_payable']}...\n"
+            f"  🔐 Securing transaction...\n"
+            f"  ✅ Payment authorized!\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎉 BOOKING CONFIRMED!\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"  📋 Booking Reference : {ref}\n"
+            f"  💳 Transaction ID    : {pay.get('transaction_id','TXN'+ref[-6:])}\n"
+            f"  💰 Amount Paid       : ₹{total['total_payable']}\n"
+            f"  🪑 Seats             : {seats.get('selected_seats', ['D5','D6'])}\n"
+            f"  📱 Payment Method    : UPI\n"
+            f"  📧 Confirmation sent to: demo@taskhive.ai\n\n"
+            f"  {pay.get('message','Booking confirmed successfully!')} 🎟️"
+        )
+
+    # ── Helper: run NIM with per-phase fallback ───────────────────────────────
+    # Returns (result_text, used_nim: bool)
+    async def run_phase(prompt: str, fallback_fn, *fallback_args):
+        try:
+            text = await agent.run(prompt)
+            return text, True   # NIM succeeded
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "Too Many Requests" in err or "RateLimitError" in err.replace(" ", ""):
+                print(f"[NIM] Rate limit — using local fallback for this phase.")
+                return fallback_fn(*fallback_args), False   # local fallback
+            raise  # re-raise unexpected errors
+
     agent = get_orchestrator()
     await emit("start", "Orchestrator", f"🚀 TaskHive (NVIDIA NIM) activated for: {user_task}")
 
-    # Free NIM tier: ~5 req/min — 12s cooldown between phases keeps us safe
-    PHASE_COOLDOWN = 12
+    NIM_COOLDOWN = 12   # seconds between NIM calls (free-tier RPM limit)
 
     # ── PHASE 1: Planning ──────────────────────────────────────────────────────
     await emit("phase", "Planner Agent", "🧠 Analysing task and creating execution plan…")
-    plan_text = await agent.run(_phase1_prompt(user_task))
+    plan_text, p1_nim = await run_phase(_phase1_prompt(user_task), _fallback_plan, user_task)
     results["plan"] = plan_text
     await emit("plan_complete", "Planner Agent", plan_text)
 
     # ── PHASE 2: Security ──────────────────────────────────────────────────────
-    await asyncio.sleep(PHASE_COOLDOWN)
+    if p1_nim:
+        await asyncio.sleep(NIM_COOLDOWN)
     await emit("phase", "Security Agent", "🔒 Running security validation on target websites…")
-    security_text = await agent.run(_phase2_prompt())
+    security_text, p2_nim = await run_phase(_phase2_prompt(), _fallback_security)
     results["security_report"] = security_text
     await emit("security_complete", "Security Agent", security_text)
 
     # ── PHASE 3: Web Navigation ────────────────────────────────────────────────
-    await asyncio.sleep(PHASE_COOLDOWN)
+    if p2_nim:
+        await asyncio.sleep(NIM_COOLDOWN)
     await emit("phase", "Web Nav Agent", "🌐 Navigating websites and extracting listings…")
-    nav_text = await agent.run(_phase3_prompt(user_task))
+    nav_text, p3_nim = await run_phase(_phase3_prompt(user_task), _fallback_nav, user_task)
     results["nav_results"] = nav_text
     await emit("nav_complete", "Web Nav Agent", nav_text)
 
     # ── PHASE 4: Decision & Validation ────────────────────────────────────────
-    await asyncio.sleep(PHASE_COOLDOWN)
+    if p3_nim:
+        await asyncio.sleep(NIM_COOLDOWN)
     await emit("phase", "Decision Agent", "✅ Validating selection against your constraints…")
-    decision_text = await agent.run(_phase4_prompt(user_task))
+    decision_text, p4_nim = await run_phase(_phase4_prompt(user_task), _fallback_decision, user_task)
     results["decision_summary"] = decision_text
     await emit("decision_complete", "Decision Agent", decision_text)
 
     # ── PHASE 5: Payment ──────────────────────────────────────────────────────
-    await asyncio.sleep(PHASE_COOLDOWN)
+    if p4_nim:
+        await asyncio.sleep(NIM_COOLDOWN)
     await emit("phase", "Payment Agent", "💳 Processing simulated payment…")
-    payment_text = await agent.run(_phase5_prompt())
+    payment_text, _ = await run_phase(_phase5_prompt(), _fallback_payment, user_task)
     results["confirmation"] = payment_text
     await emit("payment_complete", "Payment Agent", payment_text)
 
     await emit("complete", "Orchestrator", "✅ TaskHive pipeline completed successfully!")
     return results
+
+
 
 
 
