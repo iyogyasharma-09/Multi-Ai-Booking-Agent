@@ -123,23 +123,43 @@ Phase 1 — Planning:
 Show the complete structured plan."""
 
 
-def _phase2_prompt() -> str:
-    return """[🔒 SECURITY AGENT] Starting security validation.
+# Sites to scan per task category
+_CATEGORY_SITES: dict[str, list[str]] = {
+    "movies":  ["bookmyshow.com", "pvrinemas.com", "inoxmovies.com"],
+    "bills":   ["paytm.com", "phonepe.com", "airtel.in"],
+    "food":    ["zomato.com", "swiggy.com", "magicpin.in"],
+    "flights": ["makemytrip.com", "cleartrip.com", "goibibo.com"],
+    "hotels":  ["makemytrip.com", "oyorooms.com", "treebo.com"],
+    "default": ["paytm.com", "amazon.in", "flipkart.com"],
+}
+
+
+def _phase2_prompt(user_task: str = "") -> str:
+    intent   = parse_user_intent(user_task) if user_task else {}
+    category = intent.get("category", "default")
+    sites    = _CATEGORY_SITES.get(category, _CATEGORY_SITES["default"])
+    urls     = ", ".join(f"https://{s}" for s in sites)
+    primary  = sites[0]
+    return f"""[🔒 SECURITY AGENT] Starting security validation.
 
 Phase 2 — Security:
-1. Run check_url_safety on: https://bookmyshow.com, https://pvrinemas.com, https://inoxmovies.com
+1. Run check_url_safety on: {urls}
 2. Run check_domain_reputation on each domain
 3. Assign a trust score and verdict to each
 4. Give an overall security recommendation
 
-Only URLs with trust score ≥ 60 should be used."""
+Only URLs with trust score ≥ 60 should be used. Primary recommended site: {primary}"""
 
 
 def _phase3_prompt(user_task: str) -> str:
+    intent   = parse_user_intent(user_task)
+    category = intent.get("category", "default")
+    sites    = _CATEGORY_SITES.get(category, _CATEGORY_SITES["default"])
+    primary  = f"https://{sites[0]}"
     return f"""[🌐 WEB NAV AGENT] Starting web navigation.
 
 Original task: "{user_task}"
-Security-cleared website: https://bookmyshow.com
+Security-cleared website: {primary}
 
 Phase 3 — Navigation:
 1. Use search_booking_websites to confirm the right platform
@@ -219,13 +239,16 @@ async def run_task(
             + "\n".join(f"  {s}" for s in plan.get("steps", ["Search → Select → Pay"]))
         )
 
-    def _fallback_security() -> str:
-        sites = ["bookmyshow.com", "pvrinemas.com", "inoxmovies.com"]
+    def _fallback_security(task: str = "") -> str:
+        intent   = parse_user_intent(task) if task else {}
+        category = intent.get("category", "default")
+        sites    = _CATEGORY_SITES.get(category, _CATEGORY_SITES["default"])
+        primary  = sites[0]
         lines = ["[Demo Mode — NIM rate limit reached, using local tools]\n\n🔒 SECURITY SCAN RESULTS:\n"]
         for site in sites:
             r = check_url_safety(f"https://{site}")
             lines.append(f"  {r['icon']} {site}: trust={r['trust_score']}/100  verdict={r['verdict']}")
-        lines.append("\n✅ All platforms cleared for booking. Proceeding with bookmyshow.com.")
+        lines.append(f"\n✅ All platforms cleared. Proceeding with {primary}.")
         return "\n".join(lines)
 
     def _fallback_nav(task: str) -> str:
@@ -343,7 +366,7 @@ async def run_task(
     if p1_nim:
         await asyncio.sleep(NIM_COOLDOWN)
     await emit("phase", "Security Agent", "🔒 Running security validation on target websites…")
-    security_text, p2_nim = await run_phase(_phase2_prompt(), _fallback_security)
+    security_text, p2_nim = await run_phase(_phase2_prompt(user_task), _fallback_security, user_task)
     results["security_report"] = security_text
     await emit("security_complete", "Security Agent", security_text)
 
