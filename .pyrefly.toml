@@ -6,3 +6,14 @@ python_interpreter = "/Users/yogyasharma/Documents/Multi-Agent System/.venv/bin/
 
 [type_check]
 ignore_missing_imports = true
+
+# Exclude virtual/generated paths that Pyrefly creates during hover/inline analysis
+exclude = [
+  "**/__pyrefly_virtual__/**",
+  "**/.pyrefly_cache/**",
+  "**/inmemory/**",
+  "**/.venv/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/__pycache__/**",
+]

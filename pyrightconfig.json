@@ -6,5 +6,13 @@
   "typeCheckingMode": "basic",
   "reportMissingImports": false,
   "reportMissingModuleSource": false,
-  "reportMissingTypeStubs": false
+  "reportMissingTypeStubs": false,
+  "exclude": [
+    "**/__pyrefly_virtual__/**",
+    "**/.pyrefly_cache/**",
+    "**/.venv/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/__pycache__/**"
+  ]
 }
