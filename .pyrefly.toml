@@ -1,0 +1,8 @@
+# Pyrefly configuration for TaskHive
+# https://github.com/facebook/pyrefly
+
+[python]
+python_interpreter = "/Users/yogyasharma/Documents/Multi-Agent System/.venv/bin/python"
+
+[type_check]
+ignore_missing_imports = true
